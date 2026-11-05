@@ -23,7 +23,7 @@ if not defined PY (
 %PY% --version
 %PY% -m venv .venv || goto :fail
 .venv\Scripts\python.exe -m pip install --upgrade pip || goto :fail
-.venv\Scripts\python.exe -m pip install ultralytics || goto :fail
+.venv\Scripts\python.exe -m pip install ultralytics pygrabber || goto :fail
 
 echo.
 echo Install finished. Now double-click run.bat

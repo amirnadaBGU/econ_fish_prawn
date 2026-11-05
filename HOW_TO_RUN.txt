@@ -1,32 +1,64 @@
-PRAWN LIVE DETECTION - HOW TO RUN (Windows)
-============================================
+PRAWN LIVE DETECTION - HOW TO RUN
+=================================
 
-What you need: a Windows computer, the USB camera, and Python.
+What you need: a computer (Windows, Linux, Raspberry Pi 4/5 or NVIDIA Jetson),
+the USB camera, and Python.
 
 ONE TIME ONLY
-1. Unzip this folder anywhere (for example to the Desktop).
-2. If Python is not installed: install it from https://www.python.org/downloads/
-   and tick "Add python.exe to PATH" in the installer.
-3. Double-click install.bat and wait until it says "Install finished"
-   (a few minutes; it downloads about 1 GB).
+  Windows
+    1. Unzip this folder anywhere (for example to the Desktop).
+    2. If Python is not installed: install it from https://www.python.org/downloads/
+       and tick "Add python.exe to PATH" in the installer.
+    3. Double-click install.bat and wait until it says "Install finished"
+       (a few minutes; it downloads about 1 GB).
+
+  Linux / Raspberry Pi / Jetson
+    1. Copy this folder to the computer and open a terminal in it.
+    2. Run:  bash install.sh
+       and wait until it says "Install finished".
+    3. Follow any extra step it prints (on a Jetson: the GPU / TensorRT model step;
+       on a Raspberry Pi: the NCNN model step - it makes detection much faster).
 
 EVERY TIME
-1. Plug in the USB camera.
-2. Double-click run.bat
+1. Plug in the USB camera (See3CAM) with its own cable, or another USB 3 (5Gbps) cable.
+   A phone charging cable is too slow. On a Raspberry Pi use a blue (USB 3) port.
+2. Windows: double-click run.bat        Linux / Pi / Jetson: bash run.sh
 3. A window opens with the camera image. Prawns get a box and a count.
-4. Press q in the video window to stop.
+   (A Jetson with no screen runs without a window; press Ctrl+C to stop.)
+4. To stop: press q (or Esc) in the video window, or close the window with X.
+   Press c to open the camera settings (Windows). The keys work in English or Hebrew layout.
+   Do not close the black window / terminal while recording - the videos would be lost.
 5. The "runs" folder opens. Zip the newest folder inside it and send it back.
 
+CAMERA MODE (in run.bat / run.sh, right-click > Edit on Windows)
+- MODE=1080p   color, the normal choice. Other choices: 4k, 720p, ir, ir4k.
+- ir = infrared: films in the dark, but only with an infrared lamp (940 nm for the standard
+  camera). Not thermal. The image is grey and the model may find fewer prawns - test first.
+  The full explanation of every mode is at the top of run.bat / run.sh.
+
+CAMERA SETTINGS (in run.bat / run.sh, right-click > Edit on Windows)
+- EXPOSURE=auto      or a time in milliseconds, e.g. 16. Shorter = less motion blur, darker.
+- GAIN=              empty = unchanged; 1 = lowest. Higher = brighter but grainier.
+- WB=auto            or a white balance in Kelvin, e.g. 4500.
+The camera keeps these until it is unplugged. The values used are saved in summary.json.
+
 IF SOMETHING IS WRONG
-- Wrong camera opens, or none: right-click run.bat > Edit, change
-  "set CAMERA=0" to "set CAMERA=1" (then 2), save, and run again.
-- Running out of disk space: in run.bat change "set SAVE_RAW=yes" to "set SAVE_RAW=no".
-- Any error: send a screenshot of the black window.
+- "Camera 'See3CAM' not found": check that the camera is plugged in (USB 3 cable)
+  and run again. The window lists the cameras it can see.
+- Using a different camera: edit run.bat / run.sh and change
+  "CAMERA=See3CAM" to "CAMERA=0" (then 1, 2), save, and run again.
+- Running out of disk space: change "VIDEO_QUALITY=high" to "VIDEO_QUALITY=medium"
+  (or low), or "SAVE_RAW=yes" to "SAVE_RAW=no". Keep high when recording for training.
+- Only want to watch, without saving anything: change "RECORD=yes" to "RECORD=no".
+- Image too dark / too bright: set EXPOSURE=auto and GAIN=1, then adjust.
+- Any error: send a screenshot of the black window / terminal.
 
 WHAT EACH RUN SAVES (runs/<date_time>/)
-- annotated.mp4   video with the detections, as seen on screen
-- raw.mp4         clean camera video
+- annotated.mkv   video with the detections, as seen on screen
+- raw.mkv         clean camera video
+  (.mkv videos open in VLC or the Windows Media Player. If the program was closed by
+  force, the video still plays up to about the last second.)
 - detections.csv  every detected prawn: frame, time, box, confidence, 4 keypoints
 - per_frame.csv   prawn count and speed for every frame
-- summary.json    settings, camera, computer and totals
+- summary.json    settings, camera (incl. exposure / gain / white balance), computer and totals
 - snapshots/      one picture every 10 seconds
