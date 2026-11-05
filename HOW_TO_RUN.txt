@@ -1,0 +1,32 @@
+PRAWN LIVE DETECTION - HOW TO RUN (Windows)
+============================================
+
+What you need: a Windows computer, the USB camera, and Python.
+
+ONE TIME ONLY
+1. Unzip this folder anywhere (for example to the Desktop).
+2. If Python is not installed: install it from https://www.python.org/downloads/
+   and tick "Add python.exe to PATH" in the installer.
+3. Double-click install.bat and wait until it says "Install finished"
+   (a few minutes; it downloads about 1 GB).
+
+EVERY TIME
+1. Plug in the USB camera.
+2. Double-click run.bat
+3. A window opens with the camera image. Prawns get a box and a count.
+4. Press q in the video window to stop.
+5. The "runs" folder opens. Zip the newest folder inside it and send it back.
+
+IF SOMETHING IS WRONG
+- Wrong camera opens, or none: right-click run.bat > Edit, change
+  "set CAMERA=0" to "set CAMERA=1" (then 2), save, and run again.
+- Running out of disk space: in run.bat change "set SAVE_RAW=yes" to "set SAVE_RAW=no".
+- Any error: send a screenshot of the black window.
+
+WHAT EACH RUN SAVES (runs/<date_time>/)
+- annotated.mp4   video with the detections, as seen on screen
+- raw.mp4         clean camera video
+- detections.csv  every detected prawn: frame, time, box, confidence, 4 keypoints
+- per_frame.csv   prawn count and speed for every frame
+- summary.json    settings, camera, computer and totals
+- snapshots/      one picture every 10 seconds
