@@ -1,0 +1,4 @@
+ultralytics>=8.3.170,<9
+onnx
+onnxruntime
+opencv-python
