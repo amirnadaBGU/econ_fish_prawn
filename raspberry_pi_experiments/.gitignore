@@ -1,0 +1,7 @@
+.venv/
+runs/
+runs_test1/
+runs_test2/
+results_*.zip
+camera_test.jpg
+__pycache__/
