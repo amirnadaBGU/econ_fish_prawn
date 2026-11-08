@@ -3,6 +3,8 @@
 cd "$(dirname "$0")" || exit 1
 
 # ===================== Settings =====================
+# What to detect: prawn or fish (each has its own model, see MODEL below).
+TARGET=prawn
 # Camera: a name (part of it is enough) or a number.
 #   See3CAM = the e-con See3CAM_CU83 camera (found by name, whatever its number).
 #   0, 1, 2 = camera number (/dev/video0, ...), for any other camera.
@@ -20,7 +22,7 @@ CAMERA=See3CAM
 #   thermal camera: it does not see heat. The standard camera has a 940 nm lens, so use a
 #   940 nm lamp (an 850 nm lens version also exists - then use an 850 nm lamp).
 #   The image is grey and its brightness is adjusted automatically in every frame.
-#   The model learned from color images, so it may find fewer prawns in IR - test it first.
+#   The model learned from color images, so it may find fewer prawns / fish in IR - test it first.
 #   (The IR modes were tested on Windows only.)
 # Not available here: the camera's combined color+IR modes (they need e-con's own software).
 # For another camera (CAMERA=0, 1 ...) use 1080p, 4k or 720p only.
@@ -32,8 +34,10 @@ SAVE_RAW=yes
 # Size of the saved videos: high = the full MODE size (e.g. 1920x1080),
 #   medium = half (960x540, about 1/4 of the disk space), low = a quarter (480x270).
 VIDEO_QUALITY=high
+# Model file. Empty = the model for TARGET:
+#   prawn = prawn_yolo11n_pose_v0.1.pt    fish = fish_tolov26nano.pt
 # A .engine (Jetson) or _ncnn_model folder (Raspberry Pi) next to it is used automatically.
-MODEL=prawn_yolo11n_pose_v0.1.pt
+MODEL=
 # Camera controls. The camera remembers them until it is unplugged.
 #   EXPOSURE: auto, or milliseconds (8, 16, 31, 63 ...)   empty = leave as is
 #   GAIN:     1 = lowest (See3CAM); higher = brighter, noisier   empty = leave as is
@@ -51,6 +55,7 @@ fi
 EXTRA=()
 [ "$RECORD" != "no" ] && EXTRA+=(--record runs)
 [ "$SAVE_RAW" = "no" ] && EXTRA+=(--no-raw)
+[ -n "$MODEL" ] && EXTRA+=(--model "$MODEL")
 [ -n "$VIDEO_QUALITY" ] && EXTRA+=(--video-quality "$VIDEO_QUALITY")
 [ -n "$EXPOSURE" ] && EXTRA+=(--exposure "$EXPOSURE")
 [ -n "$GAIN" ] && EXTRA+=(--gain "$GAIN")
@@ -60,8 +65,8 @@ EXTRA=()
     && echo "No screen found: running without a window. Press Ctrl+C to stop."
 
 echo "Starting the camera... press q or close the video window to stop."
-.venv/bin/python live_prawn_detect.py --source "$CAMERA" --mode "$MODE" \
-    --model "$MODEL" --kpts "${EXTRA[@]}"
+.venv/bin/python live_prawn_detect.py --source "$CAMERA" --target "$TARGET" \
+    --mode "$MODE" --kpts "${EXTRA[@]}"
 
 echo
 if [ "$RECORD" = "no" ]; then

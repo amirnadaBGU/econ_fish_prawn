@@ -1,5 +1,8 @@
-PRAWN LIVE DETECTION - HOW TO RUN
-=================================
+PRAWN / FISH LIVE DETECTION - HOW TO RUN
+========================================
+
+Prawns or fish? Edit run.bat / run.sh (right-click > Edit on Windows) and set
+TARGET=prawn or TARGET=fish. Everything else works the same.
 
 What you need: a computer (Windows, Linux, Raspberry Pi 4/5 or NVIDIA Jetson),
 the USB camera, and Python.
@@ -23,11 +26,12 @@ EVERY TIME
 1. Plug in the USB camera (See3CAM) with its own cable, or another USB 3 (5Gbps) cable.
    A phone charging cable is too slow. On a Raspberry Pi use a blue (USB 3) port.
 2. Windows: double-click run.bat        Linux / Pi / Jetson: bash run.sh
-3. A window opens with the camera image. Prawns get a box and a count.
+3. A window opens with the camera image. Prawns / fish get a box and a count.
    (A Jetson with no screen runs without a window; press Ctrl+C to stop.)
 4. To stop: press q (or Esc) in the video window, or close the window with X.
    Press c to open the camera settings (Windows). The keys work in English or Hebrew layout.
-   Do not close the black window / terminal while recording - the videos would be lost.
+   Do not close the black window / terminal while recording - the last second of video,
+   the CSV files and summary.json would be lost.
 5. The "runs" folder opens. Zip the newest folder inside it and send it back.
 
 CAMERA MODE (in run.bat / run.sh, right-click > Edit on Windows)

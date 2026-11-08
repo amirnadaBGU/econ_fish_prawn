@@ -38,7 +38,7 @@ else
     python3 -m venv .venv || fail
 fi
 .venv/bin/python -m pip install --upgrade pip || fail
-.venv/bin/python -m pip install ultralytics || fail
+.venv/bin/python -m pip install "ultralytics>=8.4" || fail
 
 if [ "$PLATFORM" = jetson ]; then
     # pip pulls in its own opencv-python, which has no GStreamer and would hide

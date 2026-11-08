@@ -3,6 +3,8 @@ setlocal
 cd /d "%~dp0"
 
 rem ===================== Settings =====================
+rem What to detect: prawn or fish (each has its own model, see MODEL below).
+set TARGET=prawn
 rem Camera: a name (part of it is enough) or a number.
 rem   See3CAM = the e-con See3CAM_CU83 camera (found by name, whatever its number).
 rem   0, 1, 2 = camera number, for any other camera.
@@ -20,7 +22,7 @@ rem   dark - but only with an infrared lamp (illuminator) shining on the scene. 
 rem   thermal camera: it does not see heat. The standard camera has a 940 nm lens, so use a
 rem   940 nm lamp (an 850 nm lens version also exists - then use an 850 nm lamp).
 rem   The image is grey and its brightness is adjusted automatically in every frame.
-rem   The model learned from color images, so it may find fewer prawns in IR - test it first.
+rem   The model learned from color images, so it may find fewer prawns / fish in IR - test it first.
 rem Not available here: the camera's combined color+IR modes (they need e-con's own software).
 rem For another camera (CAMERA=0, 1 ...) use 1080p, 4k or 720p only.
 set MODE=720p
@@ -31,7 +33,9 @@ set SAVE_RAW=yes
 rem Size of the saved videos: high = the full MODE size (e.g. 1920x1080),
 rem   medium = half (960x540, about 1/4 of the disk space), low = a quarter (480x270).
 set VIDEO_QUALITY=low
-set MODEL=prawn_yolo11n_pose_v0.1.pt
+rem Model file. Empty = the model for TARGET:
+rem   prawn = prawn_yolo11n_pose_v0.1.pt    fish = fish_tolov26nano.pt
+set MODEL=
 rem Camera controls. The camera remembers them until it is unplugged.
 rem   EXPOSURE: auto, or milliseconds (8, 16, 31, 63 ...)   empty = leave as is
 rem   GAIN:     1 = lowest (See3CAM); higher = brighter, noisier   empty = leave as is
@@ -50,13 +54,14 @@ if not exist .venv\Scripts\python.exe (
 set "EXTRA="
 if /i not "%RECORD%"=="no" set "EXTRA=--record runs"
 if /i "%SAVE_RAW%"=="no" set "EXTRA=%EXTRA% --no-raw"
+if defined MODEL set "EXTRA=%EXTRA% --model %MODEL%"
 if defined VIDEO_QUALITY set "EXTRA=%EXTRA% --video-quality %VIDEO_QUALITY%"
 if defined EXPOSURE set "EXTRA=%EXTRA% --exposure %EXPOSURE%"
 if defined GAIN set "EXTRA=%EXTRA% --gain %GAIN%"
 if defined WB set "EXTRA=%EXTRA% --wb %WB%"
 
 echo Starting the camera... press q or close the video window to stop, c for camera settings.
-.venv\Scripts\python.exe live_prawn_detect.py --source "%CAMERA%" --mode %MODE% --model %MODEL% --kpts %EXTRA%
+.venv\Scripts\python.exe live_prawn_detect.py --source "%CAMERA%" --target %TARGET% --mode %MODE% --kpts %EXTRA%
 
 echo.
 if /i "%RECORD%"=="no" (

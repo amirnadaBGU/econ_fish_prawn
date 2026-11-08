@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-"""Live prawn detection: camera -> YOLO model -> on-screen boxes, count and FPS.
+"""Live prawn / fish detection: camera -> YOLO model -> on-screen boxes, count and FPS.
+
+--target prawn (default) or fish picks the default model and the on-screen words.
+Any YOLO detect or pose model works; its classes are read from the model file.
 
 Examples:
+    python live_prawn_detect.py --source See3CAM --target fish
     python live_prawn_detect.py --source See3CAM --model prawn_yolo11n_pose_v0.1.pt
     python live_prawn_detect.py --source 0 --model models/prawn_yolo11n_pose_v0.1.pt
     python live_prawn_detect.py --source 0 --model models/prawn_yolo11n_pose_v0.1.pt --record runs
@@ -19,8 +23,9 @@ platform_utils.py. Camera controls (live cameras):
     annotated.mkv    video with boxes, count and FPS
     raw.mkv          clean camera video (disable with --no-raw)
     (.mkv still plays if the program is killed; play with VLC or the Windows player)
-    detections.csv   one row per detected prawn per frame (box, conf, 4 keypoints)
-    per_frame.csv    one row per frame (count, inference ms, FPS)
+    detections.csv   one row per detected object per frame (box, conf, class; keypoints
+                     for pose models)
+    per_frame.csv    one row per frame (count, per-class counts, inference ms, FPS)
     summary.json     model, settings, camera, computer, totals
     snapshots/       one annotated image every --snapshot-every seconds
 """
@@ -39,9 +44,14 @@ from ultralytics import YOLO
 
 import platform_utils
 
-KPT_NAMES = ["carapace", "eyes", "rostrum", "tail"]
+# --target: what to detect. Picks the default model (when --model is not given), the word
+# on screen and the keypoint names of a pose model. Classes come from the model itself.
+TARGETS = {
+    "prawn": dict(model="prawn_yolo11n_pose_v0.1.pt", label="Prawns",
+                  kpt_names=["carapace", "eyes", "rostrum", "tail"]),
+    "fish": dict(model="fish_tolov26nano.pt", label="Fish", kpt_names=[]),
+}
 
-WINDOW = "Prawn detection"
 # Keys work in English and Hebrew keyboard layouts and with Caps Lock:
 # on a Hebrew layout the q key types "/" and the c key types "ב"
 # (0x5D1 as Unicode, 0xE1 in the Windows-1255 code page, 0xD1 = its low byte).
@@ -124,15 +134,19 @@ def frame_reader(cap, mode):
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Live prawn detection with a YOLO model.")
+    p = argparse.ArgumentParser(description="Live prawn / fish detection with a YOLO model.")
     p.add_argument("--source", default="0",
                    help="Camera name (e.g. See3CAM), camera index (0, 1, ...), "
                         "video file / URL, or a GStreamer pipeline string (anything "
                         "containing '!'). Default: 0")
-    p.add_argument("--model", required=True,
-                   help="Model file: .pt, .onnx, .engine or an NCNN folder. With a .pt, a "
-                        "<name>.engine (Jetson) or <name>_ncnn_model (Raspberry Pi) next to "
-                        "it is used automatically.")
+    p.add_argument("--target", choices=list(TARGETS), default="prawn",
+                   help="What to detect: "
+                        + ", ".join(f"{k} (default model {v['model']})" for k, v in TARGETS.items())
+                        + ". Default: prawn")
+    p.add_argument("--model", default=None,
+                   help="Model file: .pt, .onnx, .engine or an NCNN folder (detect or pose). "
+                        "Default: the model of --target. With a .pt, a <name>.engine (Jetson) "
+                        "or <name>_ncnn_model (Raspberry Pi) next to it is used automatically.")
     p.add_argument("--conf", type=float, default=0.25, help="Confidence threshold (default 0.25)")
     p.add_argument("--imgsz", type=int, default=640, help="Inference image size (default 640)")
     p.add_argument("--device", default=None,
@@ -169,7 +183,8 @@ def parse_args():
                         "detections.csv stays in full-resolution pixels. Default: high")
     p.add_argument("--snapshot-every", type=float, default=10,
                    help="With --record: seconds between annotated snapshots (default 10, 0 = off)")
-    p.add_argument("--kpts", action="store_true", help="Also draw the 4 pose keypoints")
+    p.add_argument("--kpts", action="store_true",
+                   help="Also draw the pose keypoints (pose models only, e.g. prawn)")
     p.add_argument("--no-show", action="store_true", help="Do not open a window (headless)")
     return p.parse_args()
 
@@ -222,8 +237,19 @@ def open_source(source, width=None, height=None, mode=None):
     return cap
 
 
-def draw_overlay(img, count, fps):
-    text = f"Prawns: {count}   FPS: {fps:.1f}"
+def class_counts(result, names):
+    """Number of detections of each class, in the model's class order."""
+    cls = result.boxes.cls.cpu().numpy().astype(int) if len(result.boxes) else []
+    return [int((cls == c).sum()) if len(cls) else 0 for c in names]
+
+
+def draw_overlay(img, counts, names, label, fps):
+    # one class: "Prawns: 3"; several: "fish: 3  partial fish: 1"
+    if len(names) == 1:
+        what = f"{label}: {sum(counts)}"
+    else:
+        what = "  ".join(f"{names[c]}: {n}" for c, n in zip(names, counts))
+    text = f"{what}   FPS: {fps:.1f}"
     scale = max(0.6, img.shape[1] / 1600)  # readable from 640 px up to 4K/5K frames
     thick = max(2, round(scale * 2))
     pad = round(10 * scale)
@@ -260,7 +286,7 @@ def system_info():
 class SessionRecorder:
     """Writes everything about one run into a timestamped folder."""
 
-    def __init__(self, root, args, cap, live):
+    def __init__(self, root, args, cap, live, names, kpt_names):
         self.dir = Path(root) / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.dir.mkdir(parents=True, exist_ok=True)
         self.snap_dir = self.dir / "snapshots"
@@ -285,14 +311,21 @@ class SessionRecorder:
         self.written = 0
         self.last_snap = None
         self.counts, self.infer_ms = [], []
+        self.names, self.kpt_names = names, kpt_names
+        self.class_totals = [0] * len(names)
 
         self.det_f = open(self.dir / "detections.csv", "w", newline="")
         self.det = csv.writer(self.det_f)
-        kp_cols = [f"{k}_{c}" for k in KPT_NAMES for c in ("x", "y", "conf")]
-        self.det.writerow(["frame", "time_s", "prawn", "x1", "y1", "x2", "y2", "conf"] + kp_cols)
+        kp_cols = [f"{k}_{c}" for k in kpt_names for c in ("x", "y", "conf")]
+        # obj = number of the object within its frame (0, 1, ...); class = name from the model
+        self.det.writerow(["frame", "time_s", "obj", "x1", "y1", "x2", "y2", "conf", "class"]
+                          + kp_cols)
         self.frm_f = open(self.dir / "per_frame.csv", "w", newline="")
         self.frm = csv.writer(self.frm_f)
-        self.frm.writerow(["frame", "time_s", "count", "infer_ms", "fps"])
+        # with several classes, also one count column per class (e.g. count_partial_fish)
+        cls_cols = ([f"count_{names[c]}".replace(" ", "_") for c in names]
+                    if len(names) > 1 else [])
+        self.frm.writerow(["frame", "time_s", "count"] + cls_cols + ["infer_ms", "fps"])
 
     def _open_writers(self, fps, shape):
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -319,18 +352,23 @@ class SessionRecorder:
         kpts = result.keypoints
         xyxy = boxes.xyxy.cpu().numpy() if len(boxes) else []
         confs = boxes.conf.cpu().numpy() if len(boxes) else []
+        cls = boxes.cls.cpu().numpy().astype(int) if len(boxes) else []
         kxy = kpts.xy.cpu().numpy() if kpts is not None and len(boxes) else None
         kcf = kpts.conf.cpu().numpy() if kxy is not None and kpts.conf is not None else None
         for i in range(len(xyxy)):
-            row = [idx, f"{t:.3f}", i] + [f"{v:.1f}" for v in xyxy[i]] + [f"{confs[i]:.3f}"]
-            for k in range(len(KPT_NAMES)):
-                if kxy is not None:
+            row = ([idx, f"{t:.3f}", i] + [f"{v:.1f}" for v in xyxy[i]]
+                   + [f"{confs[i]:.3f}", self.names.get(cls[i], cls[i])])
+            for k in range(len(self.kpt_names)):
+                if kxy is not None and k < kxy.shape[1]:
                     row += [f"{kxy[i][k][0]:.1f}", f"{kxy[i][k][1]:.1f}",
                             f"{kcf[i][k]:.3f}" if kcf is not None else ""]
                 else:
                     row += ["", "", ""]
             self.det.writerow(row)
-        self.frm.writerow([idx, f"{t:.3f}", len(xyxy), f"{infer_ms:.1f}", f"{fps:.1f}"])
+        per_class = class_counts(result, self.names)
+        self.class_totals = [a + b for a, b in zip(self.class_totals, per_class)]
+        self.frm.writerow([idx, f"{t:.3f}", len(xyxy)] + (per_class if len(self.names) > 1 else [])
+                          + [f"{infer_ms:.1f}", f"{fps:.1f}"])
         self.counts.append(len(xyxy))
         self.infer_ms.append(infer_ms)
 
@@ -375,7 +413,9 @@ class SessionRecorder:
             "started": self.started.isoformat(timespec="seconds"),
             "ended": datetime.now().isoformat(timespec="seconds"),
             "duration_s": round(elapsed, 1),
-            "model": {"file": Path(model_path).name, "sha256_16": sha},
+            "target": self.args.target,
+            "model": {"file": Path(model_path).name, "sha256_16": sha,
+                      "classes": [self.names[c] for c in self.names]},
             "settings": {"conf": self.args.conf, "imgsz": self.args.imgsz,
                          "device_requested": self.args.device, "device_used": device,
                          # what was asked for (None = left as the camera had it). With
@@ -393,10 +433,12 @@ class SessionRecorder:
             "frames": frames,
             "avg_fps_end_to_end": round(frames / elapsed, 2) if elapsed > 0 else None,
             "avg_infer_ms": round(sum(self.infer_ms) / n, 1) if n else None,
-            "prawns_per_frame": {"mean": round(sum(self.counts) / n, 2) if n else None,
-                                 "max": max(self.counts) if n else None,
-                                 "frames_with_prawns": sum(c > 0 for c in self.counts)},
-            "keypoints": KPT_NAMES,
+            "objects_per_frame": {"mean": round(sum(self.counts) / n, 2) if n else None,
+                                  "max": max(self.counts) if n else None,
+                                  "frames_with_objects": sum(c > 0 for c in self.counts)},
+            "detections_per_class": {self.names[c]: tot
+                                     for c, tot in zip(self.names, self.class_totals)},
+            "keypoints": self.kpt_names,
             "computer": system_info(),
         }
         (self.dir / "summary.json").write_text(json.dumps(summary, indent=2))
@@ -405,8 +447,16 @@ class SessionRecorder:
 
 def main():
     args = parse_args()
-    model_path = platform_utils.pick_model(args.model)
-    model = YOLO(model_path, task="pose")
+    target = TARGETS[args.target]
+    model_arg = args.model or target["model"]
+    if not Path(model_arg).exists() and (Path(__file__).parent / model_arg).exists():
+        model_arg = str(Path(__file__).parent / model_arg)   # model next to this script
+    model_path = platform_utils.pick_model(model_arg)
+    model = YOLO(model_path)              # detect or pose: the task is read from the model
+    names = model.names                   # e.g. {0: 'fish', 1: 'partial fish'}
+    kpt_names = target["kpt_names"] if model.task == "pose" else []
+    window = f"{target['label']} detection"
+    print(f"Model: {Path(model_path).name} ({model.task}), classes: {list(names.values())}")
     cap = open_source(args.source, args.width, args.height, args.mode)
     read = frame_reader(cap, args.mode)
     live = is_live_camera(args.source)
@@ -419,7 +469,8 @@ def main():
                 (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))))
         print("Camera:", f"mode {args.mode or '-'},", f"{size[0]}x{size[1]},",
               platform_utils.read_camera_controls(cap))
-    rec = SessionRecorder(args.record, args, cap, live) if args.record else None
+    rec = (SessionRecorder(args.record, args, cap, live, names, kpt_names)
+           if args.record else None)
     if rec:
         print(f"Recording session to: {rec.dir}")
 
@@ -445,7 +496,7 @@ def main():
                 result.keypoints = None  # hide keypoints in the drawing only
             annotated = result.plot()
             result.keypoints = kpts
-            draw_overlay(annotated, len(result.boxes), fps_ema)
+            draw_overlay(annotated, class_counts(result, names), names, target["label"], fps_ema)
 
             if rec:
                 t = time.perf_counter() - t_start
@@ -460,10 +511,10 @@ def main():
                 writer.write(fit(annotated, save_size))
 
             if not args.no_show:
-                cv2.imshow(WINDOW, annotated)
+                cv2.imshow(window, annotated)
                 key = cv2.waitKey(1)
                 # Closing the window (X) = quit normally, so all files are saved.
-                if key in QUIT_KEYS or cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
+                if key in QUIT_KEYS or cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
                     break
                 if key in SETTINGS_KEYS and live and not platform_utils.open_settings_dialog(cap):
                     print("Settings dialog is Windows-only. On Linux use: v4l2-ctl -d /dev/videoN --list-ctrls")
