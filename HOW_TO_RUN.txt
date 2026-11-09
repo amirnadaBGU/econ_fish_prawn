@@ -3,6 +3,8 @@ PRAWN / FISH LIVE DETECTION - HOW TO RUN
 
 Prawns or fish? Edit run.bat / run.sh (right-click > Edit on Windows) and set
 TARGET=prawn or TARGET=fish. Everything else works the same.
+For fish, PREPROCESS=yes (the default) improves each image the way the fish model was
+trained. Leave it on unless asked to turn it off.
 
 What you need: a computer (Windows, Linux, Raspberry Pi 4/5 or NVIDIA Jetson),
 the USB camera, and Python.

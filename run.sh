@@ -5,6 +5,11 @@ cd "$(dirname "$0")" || exit 1
 # ===================== Settings =====================
 # What to detect: prawn or fish (each has its own model, see MODEL below).
 TARGET=prawn
+# Fish only: improve each image before the model, the same way the fish training images
+#   were made - CLAHE (local contrast) + sharpening (yes/no). The prawn model never uses it.
+#   Only what the model sees changes; raw.mkv keeps the original camera images.
+#   Costs about 20 ms per image at 1080p on a laptop (more on a Raspberry Pi / Jetson).
+PREPROCESS=yes
 # Camera: a name (part of it is enough) or a number.
 #   See3CAM = the e-con See3CAM_CU83 camera (found by name, whatever its number).
 #   0, 1, 2 = camera number (/dev/video0, ...), for any other camera.
@@ -56,6 +61,7 @@ EXTRA=()
 [ "$RECORD" != "no" ] && EXTRA+=(--record runs)
 [ "$SAVE_RAW" = "no" ] && EXTRA+=(--no-raw)
 [ -n "$MODEL" ] && EXTRA+=(--model "$MODEL")
+[ "$PREPROCESS" = "no" ] && EXTRA+=(--no-preprocess)
 [ -n "$VIDEO_QUALITY" ] && EXTRA+=(--video-quality "$VIDEO_QUALITY")
 [ -n "$EXPOSURE" ] && EXTRA+=(--exposure "$EXPOSURE")
 [ -n "$GAIN" ] && EXTRA+=(--gain "$GAIN")

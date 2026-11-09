@@ -4,7 +4,12 @@ cd /d "%~dp0"
 
 rem ===================== Settings =====================
 rem What to detect: prawn or fish (each has its own model, see MODEL below).
-set TARGET=prawn
+set TARGET=fish
+rem Fish only: improve each image before the model, the same way the fish training images
+rem   were made - CLAHE (local contrast) + sharpening (yes/no). The prawn model never uses it.
+rem   Only what the model sees changes; raw.mkv keeps the original camera images.
+rem   Costs about 20 ms per image at 1080p (about 50 ms at 4K).
+set PREPROCESS=yes
 rem Camera: a name (part of it is enough) or a number.
 rem   See3CAM = the e-con See3CAM_CU83 camera (found by name, whatever its number).
 rem   0, 1, 2 = camera number, for any other camera.
@@ -55,6 +60,7 @@ set "EXTRA="
 if /i not "%RECORD%"=="no" set "EXTRA=--record runs"
 if /i "%SAVE_RAW%"=="no" set "EXTRA=%EXTRA% --no-raw"
 if defined MODEL set "EXTRA=%EXTRA% --model %MODEL%"
+if /i "%PREPROCESS%"=="no" set "EXTRA=%EXTRA% --no-preprocess"
 if defined VIDEO_QUALITY set "EXTRA=%EXTRA% --video-quality %VIDEO_QUALITY%"
 if defined EXPOSURE set "EXTRA=%EXTRA% --exposure %EXPOSURE%"
 if defined GAIN set "EXTRA=%EXTRA% --gain %GAIN%"

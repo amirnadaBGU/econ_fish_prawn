@@ -38,19 +38,41 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import os
+
 import cv2
 import numpy as np
 from ultralytics import YOLO
 
 import platform_utils
 
+# ultralytics sets OpenCV to 1 thread (for its training data loaders). Live preprocessing
+# (CLAHE + sharpening) is 2-3x faster with several threads: 1080p ~44 ms -> ~18 ms.
+cv2.setNumThreads(min(8, os.cpu_count() or 1))
+
 # --target: what to detect. Picks the default model (when --model is not given), the word
 # on screen and the keypoint names of a pose model. Classes come from the model itself.
 TARGETS = {
     "prawn": dict(model="prawn_yolo11n_pose_v0.1.pt", label="Prawns",
-                  kpt_names=["carapace", "eyes", "rostrum", "tail"]),
-    "fish": dict(model="fish_tolov26nano.pt", label="Fish", kpt_names=[]),
+                  kpt_names=["carapace", "eyes", "rostrum", "tail"], preprocess=False),
+    # the fish model was trained on CLAHE + sharpened images (see clahe_sharpen)
+    "fish": dict(model="fish_tolov26nano.pt", label="Fish", kpt_names=[], preprocess=True),
 }
+
+# Fish preprocessing, the same as in image_cutter_for_yolo/predict_random.py, which made the
+# training images: CLAHE on the L channel (LAB), then an unsharp mask. There it ran on the
+# full 5312 px wide photos with a 55 px blur; the blur is scaled to the frame width here so the
+# sharpening acts on the same features (1920 px -> 21 px). CLAHE tiles are already relative.
+TRAIN_PHOTO_WIDTH = 5312
+_CLAHE = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
+
+def clahe_sharpen(img):
+    l, a, b = cv2.split(cv2.cvtColor(img, cv2.COLOR_BGR2LAB))
+    clahed = cv2.cvtColor(cv2.merge((_CLAHE.apply(l), a, b)), cv2.COLOR_LAB2BGR)
+    k = max(3, int(round(55 * img.shape[1] / TRAIN_PHOTO_WIDTH)) | 1)   # odd kernel size
+    blurred = cv2.GaussianBlur(clahed, (k, k), 0)
+    return cv2.addWeighted(clahed, 1.8, blurred, -0.8, 0)
 
 # Keys work in English and Hebrew keyboard layouts and with Caps Lock:
 # on a Hebrew layout the q key types "/" and the c key types "ב"
@@ -147,6 +169,11 @@ def parse_args():
                    help="Model file: .pt, .onnx, .engine or an NCNN folder (detect or pose). "
                         "Default: the model of --target. With a .pt, a <name>.engine (Jetson) "
                         "or <name>_ncnn_model (Raspberry Pi) next to it is used automatically.")
+    p.add_argument("--no-preprocess", action="store_true",
+                   help="Fish only: turn off the CLAHE + sharpening that is applied by default to "
+                        "each frame before the model (as the fish training images were made). "
+                        "Only the model input is changed; raw.mkv keeps the original frames. "
+                        "The prawn model never uses it.")
     p.add_argument("--conf", type=float, default=0.25, help="Confidence threshold (default 0.25)")
     p.add_argument("--imgsz", type=int, default=640, help="Inference image size (default 640)")
     p.add_argument("--device", default=None,
@@ -417,6 +444,8 @@ class SessionRecorder:
             "model": {"file": Path(model_path).name, "sha256_16": sha,
                       "classes": [self.names[c] for c in self.names]},
             "settings": {"conf": self.args.conf, "imgsz": self.args.imgsz,
+                         # applied to the model input only (avg_infer_ms includes it)
+                         "preprocess": getattr(self.args, "preprocess_used", None),
                          "device_requested": self.args.device, "device_used": device,
                          # what was asked for (None = left as the camera had it). With
                          # exposure "auto", the reported exposure value below is not reliable.
@@ -456,7 +485,10 @@ def main():
     names = model.names                   # e.g. {0: 'fish', 1: 'partial fish'}
     kpt_names = target["kpt_names"] if model.task == "pose" else []
     window = f"{target['label']} detection"
-    print(f"Model: {Path(model_path).name} ({model.task}), classes: {list(names.values())}")
+    preprocess = target["preprocess"] and not args.no_preprocess
+    args.preprocess_used = "clahe+sharpen" if preprocess else None     # goes into summary.json
+    print(f"Model: {Path(model_path).name} ({model.task}), classes: {list(names.values())}, "
+          f"preprocessing: {args.preprocess_used or 'none'}")
     cap = open_source(args.source, args.width, args.height, args.mode)
     read = frame_reader(cap, args.mode)
     live = is_live_camera(args.source)
@@ -485,8 +517,9 @@ def main():
             if not ok:
                 break
 
-            t0 = time.perf_counter()
-            result = model.predict(frame, imgsz=args.imgsz, conf=args.conf,
+            t0 = time.perf_counter()        # timing includes the preprocessing
+            model_input = clahe_sharpen(frame) if preprocess else frame
+            result = model.predict(model_input, imgsz=args.imgsz, conf=args.conf,
                                    device=args.device, verbose=False)[0]
             dt = time.perf_counter() - t0
             fps_ema = 1 / dt if fps_ema is None else 0.9 * fps_ema + 0.1 / dt
