@@ -507,6 +507,7 @@ def main():
         print(f"Recording session to: {rec.dir}")
 
     writer = None
+    window_seen = False
     controls_end = None
     fps_ema = None
     frames = 0
@@ -546,8 +547,12 @@ def main():
             if not args.no_show:
                 cv2.imshow(window, annotated)
                 key = cv2.waitKey(1)
-                # Closing the window (X) = quit normally, so all files are saved.
-                if key in QUIT_KEYS or cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
+                # Closing the window (X) = quit normally, so all files are saved. Only once the
+                # window was seen open: some Linux OpenCV builds report -1/0 here, which
+                # must not end the run after the first frame.
+                visible = cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE)
+                window_seen = window_seen or visible >= 1
+                if key in QUIT_KEYS or (window_seen and visible < 1):
                     break
                 if key in SETTINGS_KEYS and live and not platform_utils.open_settings_dialog(cap):
                     print("Settings dialog is Windows-only. On Linux use: v4l2-ctl -d /dev/videoN --list-ctrls")

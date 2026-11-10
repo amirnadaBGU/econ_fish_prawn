@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-time install for Linux, Raspberry Pi and NVIDIA Jetson.  Run:  bash install.sh
 cd "$(dirname "$0")" || exit 1
-echo "=== Prawn live detection: one-time install ==="
+echo "=== Prawn / fish live detection: one-time install ==="
 echo
 
 fail() {
@@ -38,6 +38,28 @@ else
     python3 -m venv .venv || fail
 fi
 .venv/bin/python -m pip install --upgrade pip || fail
+
+# PyTorch first. The default PyTorch on PyPI is a CUDA build on ALL Linux computers (also
+# ARM), and pulls several GB of NVIDIA libraries that a Raspberry Pi or a computer without
+# an NVIDIA card cannot use, and that are the wrong CUDA for a Jetson. Once torch is
+# installed, "pip install ultralytics" keeps it.
+CPU_TORCH="https://download.pytorch.org/whl/cpu"
+if [ "$PLATFORM" = jetson ]; then
+    if ! .venv/bin/python -c "import torch" 2>/dev/null; then
+        echo "JetPack's PyTorch was not found: installing the CPU-only PyTorch for now."
+        .venv/bin/python -m pip install torch torchvision --index-url "$CPU_TORCH" || fail
+    elif ! .venv/bin/python -c "import torchvision" 2>/dev/null; then
+        # pip would fetch torchvision from PyPI together with a PyPI torch that hides JetPack's
+        echo "JetPack's PyTorch was found, but torchvision is missing."
+        echo "Install the torchvision that matches your PyTorch / JetPack, as described in:"
+        echo "  https://docs.ultralytics.com/guides/nvidia-jetson/"
+        echo "then run install.sh again."
+        exit 1
+    fi
+elif [ "$PLATFORM" = raspberrypi ] || ! command -v nvidia-smi >/dev/null; then
+    echo "No NVIDIA graphics card: installing the CPU-only PyTorch (a much smaller download)."
+    .venv/bin/python -m pip install torch torchvision --index-url "$CPU_TORCH" || fail
+fi
 .venv/bin/python -m pip install "ultralytics>=8.4" || fail
 
 if [ "$PLATFORM" = jetson ]; then
@@ -54,14 +76,18 @@ if [ "$PLATFORM" = jetson ]; then
         echo "  https://docs.ultralytics.com/guides/nvidia-jetson/"
     fi
     echo
-    echo "For best speed, make a TensorRT model ON THIS JETSON (takes several minutes):"
+    echo "For best speed, make TensorRT models ON THIS JETSON (several minutes each)."
+    echo "Make the one you use (TARGET in run.sh), or both:"
     echo "  .venv/bin/yolo export model=prawn_yolo11n_pose_v0.1.pt format=engine"
-    echo "run.sh then uses it automatically."
+    echo "  .venv/bin/yolo export model=fish_tolov26nano.pt format=engine"
+    echo "run.sh then uses them automatically."
 elif [ "$PLATFORM" = raspberrypi ]; then
     echo
-    echo "For best speed, make an NCNN model (takes a minute):"
+    echo "For best speed, make NCNN models (about a minute each)."
+    echo "Make the one you use (TARGET in run.sh), or both:"
     echo "  .venv/bin/yolo export model=prawn_yolo11n_pose_v0.1.pt format=ncnn"
-    echo "run.sh then uses it automatically."
+    echo "  .venv/bin/yolo export model=fish_tolov26nano.pt format=ncnn"
+    echo "run.sh then uses them automatically."
 fi
 
 echo
