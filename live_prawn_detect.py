@@ -39,6 +39,7 @@ from datetime import datetime
 from pathlib import Path
 
 import os
+import threading
 
 import cv2
 import numpy as np
@@ -213,7 +214,49 @@ def parse_args():
     p.add_argument("--kpts", action="store_true",
                    help="Also draw the pose keypoints (pose models only, e.g. prawn)")
     p.add_argument("--no-show", action="store_true", help="Do not open a window (headless)")
+    p.add_argument("--frame-timeout", type=float, default=10,
+                   help="Stop (and save) if the camera sends no image for this many seconds "
+                        "(default 10)")
     return p.parse_args()
+
+
+T0 = time.perf_counter()
+
+
+def log(msg):
+    """Progress message with the seconds since start, shown at once (also when piped)."""
+    print(f"[{time.perf_counter() - T0:6.1f} s] {msg}", flush=True)
+
+
+class StallWatchdog:
+    """cap.read() has no timeout: if the camera stops sending images it blocks forever and
+    the program looks frozen. This thread notices a read that takes longer than `timeout`
+    seconds, calls on_stall (message + save the recording) and ends the program - the blocked
+    read itself cannot be interrupted."""
+
+    def __init__(self, timeout, on_stall):
+        self.timeout, self.on_stall = timeout, on_stall
+        self.lock = threading.Lock()
+        self.reading_since = None
+        threading.Thread(target=self._watch, daemon=True).start()
+
+    def read(self, read_fn):
+        self.reading_since = time.monotonic()
+        result = read_fn()
+        with self.lock:          # waits here if the watchdog is already stopping the program
+            self.reading_since = None
+        return result
+
+    def _watch(self):
+        while True:
+            time.sleep(0.5)
+            with self.lock:
+                since = self.reading_since
+                if since is not None and time.monotonic() - since > self.timeout:
+                    try:
+                        self.on_stall(time.monotonic() - since)
+                    finally:
+                        os._exit(2)
 
 
 def is_camera_name(source):
@@ -481,42 +524,63 @@ def main():
     if not Path(model_arg).exists() and (Path(__file__).parent / model_arg).exists():
         model_arg = str(Path(__file__).parent / model_arg)   # model next to this script
     model_path = platform_utils.pick_model(model_arg)
+    log(f"Loading model {Path(model_path).name} ...")
     model = YOLO(model_path)              # detect or pose: the task is read from the model
     names = model.names                   # e.g. {0: 'fish', 1: 'partial fish'}
     kpt_names = target["kpt_names"] if model.task == "pose" else []
     window = f"{target['label']} detection"
     preprocess = target["preprocess"] and not args.no_preprocess
     args.preprocess_used = "clahe+sharpen" if preprocess else None     # goes into summary.json
-    print(f"Model: {Path(model_path).name} ({model.task}), classes: {list(names.values())}, "
-          f"preprocessing: {args.preprocess_used or 'none'}")
+    log(f"Model: {Path(model_path).name} ({model.task}), classes: {list(names.values())}, "
+        f"preprocessing: {args.preprocess_used or 'none'}")
+    log(f"Opening {args.source} ...")
     cap = open_source(args.source, args.width, args.height, args.mode)
     read = frame_reader(cap, args.mode)
     live = is_live_camera(args.source)
+
+    rec = writer = None
+    frames = 0
+    t_start = time.perf_counter()
+
+    def on_stall(waited):
+        print(f"\nERROR: no image from the camera for {waited:.0f} s - stopping.\n"
+              "  Check: the camera cable is plugged in (a USB 3 / blue port), no other program\n"
+              "  uses the camera, and the power supply is strong enough (Raspberry Pi: the\n"
+              "  official supply; 'vcgencmd get_throttled' should print 0x0).", flush=True)
+        if writer is not None:
+            writer.release()
+        if rec:
+            out = rec.close(frames, time.perf_counter() - t_start, model_path, str(args.device))
+            print(f"Session saved (up to the stop): {out}", flush=True)
+
+    watchdog = StallWatchdog(args.frame_timeout, on_stall)
     if live:
         platform_utils.apply_camera_controls(cap, exposure=args.exposure, gain=args.gain,
                                              wb=args.wb, brightness=args.brightness)
+        log("Waiting for the first image from the camera ...")
         for _ in range(5):          # let the new settings take effect
-            cap.read()
+            watchdog.read(cap.read)
         size = (MODES[args.mode]["out"] if args.mode and MODES[args.mode]["ir"] else
                 (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))))
-        print("Camera:", f"mode {args.mode or '-'},", f"{size[0]}x{size[1]},",
-              platform_utils.read_camera_controls(cap))
+        log(f"Camera: mode {args.mode or '-'}, {size[0]}x{size[1]}, "
+            f"{platform_utils.read_camera_controls(cap)}")
     rec = (SessionRecorder(args.record, args, cap, live, names, kpt_names)
            if args.record else None)
     if rec:
-        print(f"Recording session to: {rec.dir}")
+        log(f"Recording session to: {rec.dir}")
 
-    writer = None
     window_seen = False
     controls_end = None
     fps_ema = None
-    frames = 0
     t_start = time.perf_counter()
     try:
         while True:
-            ok, frame = read()
+            ok, frame = watchdog.read(read)
             if not ok:
                 break
+            if frames == 0:
+                log(f"First image {frame.shape[1]}x{frame.shape[0]}; running the model "
+                    "(the first image is slow, the model is warming up) ...")
 
             t0 = time.perf_counter()        # timing includes the preprocessing
             model_input = clahe_sharpen(frame) if preprocess else frame
@@ -524,6 +588,10 @@ def main():
                                    device=args.device, verbose=False)[0]
             dt = time.perf_counter() - t0
             fps_ema = 1 / dt if fps_ema is None else 0.9 * fps_ema + 0.1 / dt
+            if frames == 0:
+                log(f"Model ready (first image took {dt:.1f} s). Running - press q to stop.")
+            elif frames in (10, 100):
+                log(f"{frames} images done, model {1000 * dt:.0f} ms per image")
 
             kpts = result.keypoints
             if not args.kpts:
@@ -560,6 +628,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        watchdog.timeout = float("inf")     # the stop itself must not count as a stall
         if live:
             controls_end = platform_utils.read_camera_controls(cap)
         cap.release()
